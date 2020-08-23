@@ -137,6 +137,9 @@ class MOT16(Dataset):
                 tmp.uid = g[j].uid
                 dt.append_data(tmp)
 
+    def get_seq_name(self, one):
+        return one
+
     def _process(self):
         if self.meta_file == '':
             self.meta_file = osp.join(
@@ -147,6 +150,7 @@ class MOT16(Dataset):
             lines = fd.readlines()
         for one in lines:
             one = one.strip()
+            seq = self.get_seq_name(one)
             seq_imdir = self.path_pattern(self.test_mode, 'img', one)
             vid = VideoClipReader(seq_imdir)
             # seq_dt = osp.join(dt_mappings[self.test_mode], one + '.txt')
@@ -184,7 +188,7 @@ class MOT16(Dataset):
                             'unable to get filename for a video frame'
                         )
                     tuples.append((im_path, o[fr][0]))
-                data_ = {'img': [], 'dets': [], 'uid': gid, 'seq': one}
+                data_ = {'img': [], 'dets': [], 'uid': gid, 'seq': seq}
                 for im, pre_d in tuples:
                     data_['img'].append(im)
                     data_['dets'].append(
@@ -257,7 +261,7 @@ class MOT16(Dataset):
         for k in ['seq', 'uid']:
             ret[k] = data[k]
         ret['dets'] = np.array(data['dets'])
-        ret['filename'] = data['img']
+        ret['filename'] = data['seq']
         ret['im'] = self._process_im(data['img'], ret['dets'])
         ret = self.pipeline(ret)
         return ret
@@ -373,3 +377,6 @@ class CrowdHuman(MOT16):
                 d.fr = 1
                 ret.append_data(d)
         return ret
+
+    def get_seq_name(self, one):
+        return self.path_pattern(self.test_mode, 'img', one)
