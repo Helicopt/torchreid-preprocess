@@ -31,6 +31,49 @@ class MOT16(Dataset):
 
     # dataset_url = 'http://vision.cs.duke.edu/DukeMTMC/data/misc/DukeMTMC-reID.zip'
 
+    def generate_paths(self):
+        img_pattern = 'train/%s/img1/'
+        img_pattern_test = 'test/%s/img1/'
+        det_pattern = 'train/%s/det/det.txt'
+        det_pattern_test = 'test/%s/det/det.txt'
+        gt_pattern = 'train/%s/gt/gt.txt'
+        self.train_im_dir = osp.join(self.dataset_dir, img_pattern)
+        self.val_im_dir = osp.join(self.dataset_dir, img_pattern)
+        self.test_im_dir = osp.join(self.dataset_dir, img_pattern_test)
+        self.train_dt_dir = osp.join(self.dataset_dir, det_pattern)
+        self.val_dt_dir = osp.join(self.dataset_dir, det_pattern)
+        self.test_dt_dir = osp.join(self.dataset_dir, det_pattern_test)
+        self.train_gt_dir = osp.join(self.dataset_dir, gt_pattern)
+        self.val_gt_dir = osp.join(self.dataset_dir, gt_pattern)
+        im_mappings = {
+            'test': self.test_im_dir,
+            'val': self.val_im_dir,
+            'train': self.train_im_dir,
+        }
+        dt_mappings = {
+            'test': self.test_dt_dir,
+            'val': self.val_dt_dir,
+            'train': self.train_dt_dir,
+        }
+        gt_mappings = {
+            'val': self.val_gt_dir,
+            'train': self.train_gt_dir,
+        }
+
+        def gen_pattern(mode, item, seq):
+            if item == 'img':
+                return im_mappings[mode]%seq
+            elif item == 'det':
+                return dt_mappings[mode]%seq
+            elif item == 'gt':
+                return gt_mappings[mode]%seq
+            else:
+                raise
+        self.path_pattern = gen_pattern
+        self.gt_formatter ='fr.i id.i x1 y1 w h st.i -1 -1 -1'
+        self.gt_filter = lambda d: d.status == 1
+        self.dt_formatter = None
+
     def __init__(
         self,
         root='',
@@ -46,14 +89,7 @@ class MOT16(Dataset):
     ):
         self.root = osp.abspath(osp.expanduser(root))
         self.dataset_dir = osp.join(self.root, self.dataset_dir)
-        self.train_im_dir = osp.join(self.dataset_dir, 'imgs/train')
-        self.val_im_dir = osp.join(self.dataset_dir, 'imgs/train')
-        self.test_im_dir = osp.join(self.dataset_dir, 'imgs/test')
-        self.train_dt_dir = osp.join(self.dataset_dir, 'dts/train')
-        self.val_dt_dir = osp.join(self.dataset_dir, 'dts/train')
-        self.test_dt_dir = osp.join(self.dataset_dir, 'dts/test')
-        self.train_gt_dir = osp.join(self.dataset_dir, 'gts/train')
-        self.val_gt_dir = osp.join(self.dataset_dir, 'gts/train')
+        self.generate_paths()
 
         # required_files = [
         #     self.dataset_dir, self.train_dir, self.query_dir, self.gallery_dir
@@ -107,39 +143,28 @@ class MOT16(Dataset):
         data = []
         with open(self.meta_file) as fd:
             lines = fd.readlines()
-        im_mappings = {
-            'test': self.test_im_dir,
-            'val': self.val_im_dir,
-            'train': self.train_im_dir,
-        }
-        dt_mappings = {
-            'test': self.test_dt_dir,
-            'val': self.val_dt_dir,
-            'train': self.train_dt_dir,
-        }
-        gt_mappings = {
-            'val': self.val_gt_dir,
-            'train': self.train_gt_dir,
-        }
         for one in lines:
             one = one.strip()
-            seq_imdir = osp.join(im_mappings[self.test_mode], one)
+            seq_imdir = self.path_pattern(self.test_mode, 'img', one)
             vid = VideoClipReader(seq_imdir)
-            seq_dt = osp.join(dt_mappings[self.test_mode], one + '.txt')
-            dt = TrackSet(seq_dt, formatter='fr.i id.i x1 y1 w h cf -1 -1 -1')
-            seq_gt = osp.join(gt_mappings[self.test_mode], one + '.txt')
-            if not osp.exists(seq_gt):
-                seq_gt = seq_gt[:-4]
-            gt = TrackSet(
-                seq_gt,
-                formatter='fr.i id.i x1 y1 w h st.i -1 -1 -1',
-                filter=lambda d: d.status == 1,
-            )
-            self._match_gt(dt, gt)
-            for gid in dt.allId():
+            # seq_dt = osp.join(dt_mappings[self.test_mode], one + '.txt')
+            # seq_dt = self.path_pattern(self.test_mode, 'det', one)
+            # dt = TrackSet(seq_dt, formatter='fr.i id.i x1 y1 w h cf -1 -1 -1')
+            # seq_gt = osp.join(gt_mappings[self.test_mode], one + '.txt')
+            seq_gt = self.path_pattern(self.test_mode, 'gt', one)
+            if hasattr(self, 'gt_parse'):
+                gt = self.gt_parse(seq_gt)
+            else:
+                gt = TrackSet(
+                    seq_gt,
+                    formatter = self.gt_formatter,
+                    filter=self.gt_filter,
+                )
+            # self._match_gt(dt, gt)
+            for gid in gt.allId():
                 if gid < 0:
                     continue
-                o = dt(gid)
+                o = gt(gid)
                 frs = list(o.allFr())
                 frs = [frs[0], frs[len(frs)//2], frs[-1]]
                 tuples = []
