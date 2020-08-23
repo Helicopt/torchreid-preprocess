@@ -1,6 +1,8 @@
 from __future__ import division, print_function, absolute_import
 import re
 import glob
+import json
+import yaml
 import os.path as osp
 
 from torch.utils.data import Dataset
@@ -62,15 +64,16 @@ class MOT16(Dataset):
 
         def gen_pattern(mode, item, seq):
             if item == 'img':
-                return im_mappings[mode]%seq
+                return im_mappings[mode] % seq
             elif item == 'det':
-                return dt_mappings[mode]%seq
+                return dt_mappings[mode] % seq
             elif item == 'gt':
-                return gt_mappings[mode]%seq
+                return gt_mappings[mode] % seq
             else:
                 raise
+
         self.path_pattern = gen_pattern
-        self.gt_formatter ='fr.i id.i x1 y1 w h st.i -1 -1 -1'
+        self.gt_formatter = 'fr.i id.i x1 y1 w h st.i la.i cf'
         self.gt_filter = lambda d: d.status == 1
         self.dt_formatter = None
 
@@ -118,7 +121,6 @@ class MOT16(Dataset):
 
         self._cache_flag = False
 
-
     def __len__(self):
         return len(self.data)
 
@@ -157,7 +159,7 @@ class MOT16(Dataset):
             else:
                 gt = TrackSet(
                     seq_gt,
-                    formatter = self.gt_formatter,
+                    formatter=self.gt_formatter,
                     filter=self.gt_filter,
                 )
             # self._match_gt(dt, gt)
@@ -166,22 +168,28 @@ class MOT16(Dataset):
                     continue
                 o = gt(gid)
                 frs = list(o.allFr())
-                frs = [frs[0], frs[len(frs)//2], frs[-1]]
+                frs = [frs[0], frs[len(frs) // 2], frs[-1]]
                 tuples = []
                 for fr in frs:
-                    im_path = osp.join(
-                        vid.backend.i_root,
-                        vid.backend.fmt % (vid.backend.start + fr - 1)
-                    )
+                    if isinstance(vid.backend, ImgVideoCapture):
+                        im_path = osp.join(
+                            vid.backend.i_root,
+                            vid.backend.fmt % (vid.backend.start + fr - 1)
+                        )
+                    elif seq_imdir.endswith(('.jpg', '.jpeg', '.png')):
+                        im_path = seq_imdir
+                    else:
+                        im_path = (seq_imdir, fr)
+                        raise NotImplementedError(
+                            'unable to get filename for a video frame'
+                        )
                     tuples.append((im_path, o[fr][0]))
                 data_ = {'img': [], 'dets': [], 'uid': gid, 'seq': one}
                 for im, pre_d in tuples:
                     data_['img'].append(im)
                     data_['dets'].append(
-                            [
-                                    pre_d.x1, pre_d.y1, pre_d.x2 + 1,
-                                    pre_d.y2 + 1
-                            ])
+                        [pre_d.x1, pre_d.y1, pre_d.x2 + 1, pre_d.y2 + 1]
+                    )
                 data.append(data_)
         return data
 
@@ -249,9 +257,8 @@ class MOT16(Dataset):
         for k in ['seq', 'uid']:
             ret[k] = data[k]
         ret['dets'] = np.array(data['dets'])
-        ret['im'] = self._process_im(
-            data['img'], ret['dets']
-        )
+        ret['filename'] = data['img']
+        ret['im'] = self._process_im(data['img'], ret['dets'])
         ret = self.pipeline(ret)
         return ret
 
@@ -260,4 +267,109 @@ class HIE20(MOT16):
 
     dataset_dir = 'HIE20'
 
-    pass
+    def generate_paths(self):
+        img_pattern = 'imgs/train/%s/'
+        img_pattern_test = 'imgs/test/%s/'
+        det_pattern = 'dts/train/%s.txt'
+        det_pattern_test = 'dts/test/%s.txt'
+        gt_pattern = 'labels/train/track1/%s.txt'
+        self.train_im_dir = osp.join(self.dataset_dir, img_pattern)
+        self.val_im_dir = osp.join(self.dataset_dir, img_pattern)
+        self.test_im_dir = osp.join(self.dataset_dir, img_pattern_test)
+        self.train_dt_dir = osp.join(self.dataset_dir, det_pattern)
+        self.val_dt_dir = osp.join(self.dataset_dir, det_pattern)
+        self.test_dt_dir = osp.join(self.dataset_dir, det_pattern_test)
+        self.train_gt_dir = osp.join(self.dataset_dir, gt_pattern)
+        self.val_gt_dir = osp.join(self.dataset_dir, gt_pattern)
+        im_mappings = {
+            'test': self.test_im_dir,
+            'val': self.val_im_dir,
+            'train': self.train_im_dir,
+        }
+        dt_mappings = {
+            'test': self.test_dt_dir,
+            'val': self.val_dt_dir,
+            'train': self.train_dt_dir,
+        }
+        gt_mappings = {
+            'val': self.val_gt_dir,
+            'train': self.train_gt_dir,
+        }
+
+        def gen_pattern(mode, item, seq):
+            if item == 'img':
+                return im_mappings[mode] % seq
+            elif item == 'det':
+                return dt_mappings[mode] % seq
+            elif item == 'gt':
+                return gt_mappings[mode] % seq
+            else:
+                raise
+
+        self.path_pattern = gen_pattern
+        self.gt_formatter = 'fr.i id.i x1 y1 w h st.i -1 -1 -1'
+        self.gt_filter = lambda d: d.status == 1
+        self.dt_formatter = None
+
+
+class CrowdHuman(MOT16):
+
+    dataset_dir = 'crowd_human'
+
+    def generate_paths(self):
+        img_pattern = 'train/Images/%s.jpg'
+        img_pattern_test = 'val/Images/%s.jpg'
+        det_pattern = 'train/Dets/%s.txt'
+        det_pattern_test = 'val/Dets/%s.txt'
+        gt_pattern = 'annotation_train.odgt'
+        self.train_im_dir = osp.join(self.dataset_dir, img_pattern)
+        self.val_im_dir = osp.join(self.dataset_dir, img_pattern)
+        self.test_im_dir = osp.join(self.dataset_dir, img_pattern_test)
+        self.train_dt_dir = osp.join(self.dataset_dir, det_pattern)
+        self.val_dt_dir = osp.join(self.dataset_dir, det_pattern)
+        self.test_dt_dir = osp.join(self.dataset_dir, det_pattern_test)
+        self.train_gt_dir = osp.join(self.dataset_dir, gt_pattern)
+        self.val_gt_dir = osp.join(self.dataset_dir, gt_pattern)
+        im_mappings = {
+            'test': self.test_im_dir,
+            'val': self.val_im_dir,
+            'train': self.train_im_dir,
+        }
+        dt_mappings = {
+            'test': self.test_dt_dir,
+            'val': self.val_dt_dir,
+            'train': self.train_dt_dir,
+        }
+        gt_mappings = {
+            'val': self.val_gt_dir,
+            'train': self.train_gt_dir,
+        }
+
+        def gen_pattern(mode, item, seq):
+            u = json.loads(seq)
+            seq = u['ID']
+            if item == 'img':
+                return im_mappings[mode] % seq
+            elif item == 'det':
+                return dt_mappings[mode] % seq
+            elif item == 'gt':
+                return u
+            else:
+                raise
+
+        self.path_pattern = gen_pattern
+        self.gt_formatter = None
+        self.gt_filter = None
+        self.dt_formatter = None
+
+    def gt_parse(self, gt):
+        ret = TrackSet()
+        for g in gt['gtboxes']:
+            ignore = g['extra'].pop('ignore', 0)
+            if g['tag'] == 'person' and not ignore:
+                x1, y1, w, h = g['fbox']
+                uid = g['extra']['box_id']
+                d = Det(x1, y1, w, h, cls=1, uid=uid)
+                d.fr = 1
+                ret.append_data(d)
+        return ret

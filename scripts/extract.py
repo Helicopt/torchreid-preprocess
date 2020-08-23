@@ -10,7 +10,7 @@ import os
 import sys
 sys.path.insert(0, '')
 import torchreid
-from torchreid.data.datasets.image.TRACK_MOT16 import MOT16
+from torchreid.data.datasets.image.TRACK_MOT16 import MOT16, HIE20, CrowdHuman
 import torch
 import torch.nn.functional as F
 from torchreid.utils import (
@@ -21,6 +21,7 @@ from default_config import (
     imagedata_kwargs, optimizer_kwargs, videodata_kwargs, engine_run_kwargs,
     get_default_config, lr_scheduler_kwargs
 )
+
 
 def to_cuda(*args, device='cuda'):
     ret = []
@@ -36,9 +37,15 @@ def to_cuda(*args, device='cuda'):
             ret.append(i)
     return ret
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     # __author__ == '__toka__'
-    d = MOT16(root='/mnt/lustre/share/fengweitao')
+    # d = MOT16(root='/mnt/lustre/share/fengweitao')
+    d = CrowdHuman(
+        root='/mnt/lustre/share/fengweitao',
+        meta_file=
+        '/mnt/lustre/share/fengweitao/crowd_human/annotation_train.odgt'
+    )
     dl = torch.utils.data.DataLoader(d, batch_size=16, num_workers=4)
     print(dl)
     config_file = 'configs/im_osnet_x1_0_softmax_256x128_amsgrad_cosine.yaml'
@@ -49,7 +56,7 @@ if __name__=='__main__':
         name=cfg.model.name,
         num_classes=1024,
         loss=cfg.loss.name,
-        pretrained=cfg.model.pretrained,
+        pretrained=False,
         use_gpu=cfg.use_gpu
     )
     load_pretrained_weights(model, cfg.model.load_weights)
@@ -69,15 +76,20 @@ if __name__=='__main__':
         for j in range(o.size(1)):
             for k in range(o.size(1)):
                 f1 = F.normalize(o[:, j], dim=1)
-                f2 = F.normalize(o[:, (j+k+1)%o.size(1)], dim=1)
+                f2 = F.normalize(o[:, (j+k+1) % o.size(1)], dim=1)
                 d = (f1 * f2).sum(dim=1)
                 dm += d
-        dm /= o.size(1) ** 2
+        dm /= o.size(1)**2
         print(dm)
         o_u = o.mean(dim=1)
         for j in range(o_u.size(0)):
-            all_results.append({'seq': data['seq'][j], 'uid': data['uid'][j].cpu().numpy(), 'feat': o_u[j].cpu().numpy()})
+            all_results.append(
+                {
+                    'filename': data['filename'][j],
+                    'uid': data['uid'][j].cpu().numpy(),
+                    'feat': o_u[j].cpu().numpy()
+                }
+            )
         #dm = o_u.matmul(o_u.transpose(1, 0))
         #print(dm.max(dim=1))
-    torch.save(all_results, 'MOT16_cluster.pkl')
-        
+    torch.save(all_results, '%s_feats.pkl' % d.dataset_dir)
